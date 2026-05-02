@@ -107,17 +107,28 @@ class GmailClient:
         batch_size: int = 10,
         max_retries: int = 5,
     ) -> list[EmailMessage]:
-        """Fetch metadata for many messages using batched HTTP requests with retry on rate limits."""
+        """Fetch metadata for many messages using batched HTTP requests.
+
+        Robust to two failure modes:
+        - Per-message HTTP errors (429/500/503) → retried individually with backoff.
+        - Whole-batch BatchError ("Response not in multipart/mixed format.") which the
+          google client occasionally raises → the whole chunk is retried, with
+          exponential backoff and a fall-through to sequential fetches if it keeps
+          failing.
+        """
         if not message_ids:
             return []
 
         import time
-        from googleapiclient.errors import HttpError
+        from googleapiclient.errors import BatchError, HttpError
 
         results: dict[str, dict] = {}
 
         def fetch_chunk(chunk: list[str]) -> list[str]:
-            """Fetch one chunk; return list of message_ids that failed with retryable errors."""
+            """Fetch one chunk; return list of message_ids that failed with retryable errors.
+
+            Raises BatchError if the entire batch HTTP request fails.
+            """
             retryable: list[str] = []
 
             def make_callback(mid):
@@ -142,19 +153,49 @@ class GmailClient:
             batch.execute()
             return retryable
 
+        def fetch_sequential(chunk: list[str]) -> None:
+            """Last-resort fallback: fetch one message at a time."""
+            for mid in chunk:
+                if mid in results:
+                    continue
+                try:
+                    msg = self.service.users().messages().get(
+                        userId="me",
+                        id=mid,
+                        format="metadata",
+                        metadataHeaders=["From", "To", "Subject", "List-Unsubscribe", "Date"],
+                    ).execute()
+                    results[mid] = msg
+                except HttpError as e:
+                    print(f"Error fetching message {mid} (sequential): {e}")
+
         for chunk_start in range(0, len(message_ids), batch_size):
             chunk = message_ids[chunk_start:chunk_start + batch_size]
             attempt = 0
             backoff = 1.0
             pending = chunk
+            batch_failed = False
             while pending and attempt < max_retries:
-                pending = fetch_chunk(pending)
+                try:
+                    pending = fetch_chunk(pending)
+                except BatchError as e:
+                    print(f"Batch failed ({e}); retrying chunk in {backoff:.1f}s")
+                    batch_failed = True
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 30.0)
+                    attempt += 1
+                    continue
                 if pending:
                     time.sleep(backoff)
                     backoff = min(backoff * 2, 30.0)
                     attempt += 1
-            if pending:
-                print(f"Giving up on {len(pending)} messages after {max_retries} retries")
+            if pending or batch_failed:
+                # Either still have retryable per-message failures, or every batch
+                # attempt blew up — fall through to sequential fetches for remaining IDs.
+                missing = [mid for mid in chunk if mid not in results]
+                if missing:
+                    print(f"Falling back to sequential fetch for {len(missing)} messages")
+                    fetch_sequential(missing)
 
         emails: list[EmailMessage] = []
         for mid in message_ids:
