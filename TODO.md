@@ -3,17 +3,23 @@
 Project: Gmail inbox triage CLI + Flask webapp
 Repo: https://github.com/samuelfrench/email-triage (public, MIT)
 
-## Current state (2026-05-01)
+## Current state (2026-05-02)
 
-- 3,615 unread inbox messages remaining (started at 3,707).
-- 92 jobalerts-noreply@linkedin.com cleared via webapp mark-read.
-- 320 actions recorded in `data/triage.db`, all reversible via `python3 main.py undo last`.
-- Webapp + CLI both functional. Latest commit: `23cbe02`.
+- 2,506 unread inbox messages remaining (down from 3,615).
+- 1,094 `[clawd-bot] Hourly Status Report` self-sent reports labeled
+  `Triaged-Reviewed` + read in run_id 7 (reversible: `python3 main.py undo run 7`).
+- Top remaining sender is still self at 1,221 — non-clawd personal self-sent
+  emails that must NOT be bulk-actioned.
+- 1,414 actions recorded in `data/triage.db`, all reversible via `python3 main.py undo`.
+- Webapp + CLI both functional.
 
 ## Open
 
-- [ ] Continue sender-grouped cleanup of remaining unread (top targets: messages-noreply@linkedin.com (57), updates-noreply@linkedin.com (39), notifications-noreply@linkedin.com (31), then other marketing senders).
-- [ ] Decide on the 2,276 self-sent `[clawd-bot] Hourly Status Report` emails — webapp's "Mark Reviewed" applies the `Triaged-Reviewed` label so they're explicitly addressed.
+- [ ] Continue sender-grouped cleanup of remaining unread (top non-self targets
+      include marketing senders from `noreply@myarborhub.com`, `linkedin.com`,
+      `google.com`, etc. — see webapp for current ranks).
+- [ ] Manually review the 1,221 non-clawd self-sent emails — these are mixed
+      personal mail; cannot be bulk-reviewed safely.
 - [ ] After cleanup, run `python3 main.py triage --mark-read` once for ongoing rule-based triage.
 
 ## Backlog (nice-to-have)
