@@ -312,6 +312,60 @@ async function refreshInbox() {
     setTimeout(poll, 1000);
 }
 
+// --- Debug panel ---
+
+const debugState = { open: false, autorefresh: true, intervalId: null };
+
+async function refreshDebugLogs() {
+    if (!debugState.open) return;
+    const level = $("debug-level").value;
+    const url = `/api/debug/logs?limit=400${level ? `&level=${level}` : ""}`;
+    try {
+        const res = await api(url);
+        const log = $("debug-log");
+        const wasAtBottom = log.scrollTop + log.clientHeight + 30 >= log.scrollHeight;
+        log.innerHTML = (res.entries || []).map(e =>
+            `<span class="log-${e.level}">${e.ts.slice(11)} ${e.level.padEnd(7)} [${escapeHtml(e.logger.replace(/^email_triage\.?/, ""))}] ${escapeHtml(e.message)}${e.exc ? "\n" + escapeHtml(e.exc) : ""}</span>`
+        ).join("\n");
+        $("debug-meta").textContent = `${res.entries.length} entries • ${res.log_path}`;
+        if (wasAtBottom) log.scrollTop = log.scrollHeight;
+    } catch (e) {
+        $("debug-log").textContent = `Failed to load debug log: ${e.message}`;
+    }
+}
+
+function toggleDebug() {
+    debugState.open = !debugState.open;
+    $("debug-panel").hidden = !debugState.open;
+    if (debugState.open) {
+        refreshDebugLogs();
+        if (debugState.autorefresh && !debugState.intervalId) {
+            debugState.intervalId = setInterval(refreshDebugLogs, 1500);
+        }
+    } else if (debugState.intervalId) {
+        clearInterval(debugState.intervalId);
+        debugState.intervalId = null;
+    }
+}
+
+async function clientLog(level, message, meta = null) {
+    try {
+        await fetch("/api/debug/client-log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ level, message, meta }),
+        });
+    } catch { /* swallow */ }
+}
+
+window.addEventListener("error", (e) => {
+    clientLog("error", `js error: ${e.message}`, { source: e.filename, line: e.lineno });
+});
+window.addEventListener("unhandledrejection", (e) => {
+    clientLog("error", `unhandled rejection: ${e.reason && e.reason.message ? e.reason.message : e.reason}`);
+});
+
+
 document.addEventListener("DOMContentLoaded", () => {
     $("filter").addEventListener("input", applyFilter);
     $("refresh-btn").addEventListener("click", refreshInbox);
@@ -330,6 +384,23 @@ document.addEventListener("DOMContentLoaded", () => {
     $("action-mark-read").addEventListener("click", () => bulkAction("/api/actions/mark-read"));
     $("action-mark-reviewed").addEventListener("click", () => bulkAction("/api/actions/mark-reviewed"));
     $("action-apply-low").addEventListener("click", () => bulkAction("/api/actions/apply-label", "LowPriority"));
+
+    $("debug-btn").addEventListener("click", toggleDebug);
+    $("debug-close").addEventListener("click", toggleDebug);
+    $("debug-clear").addEventListener("click", async () => {
+        await api("/api/debug/logs/clear", { method: "POST" });
+        refreshDebugLogs();
+    });
+    $("debug-level").addEventListener("change", refreshDebugLogs);
+    $("debug-autorefresh").addEventListener("change", (e) => {
+        debugState.autorefresh = e.target.checked;
+        if (debugState.autorefresh && !debugState.intervalId) {
+            debugState.intervalId = setInterval(refreshDebugLogs, 1500);
+        } else if (!debugState.autorefresh && debugState.intervalId) {
+            clearInterval(debugState.intervalId);
+            debugState.intervalId = null;
+        }
+    });
 
     loadSenders();
 });

@@ -102,6 +102,57 @@ def _load_cache() -> Optional[dict]:
         return None
 
 
+_CACHE_LOCK = __import__("threading").Lock()
+
+
+def remove_message_ids_from_cache(processed_ids: list[str]) -> dict:
+    """Remove processed message IDs from the senders cache.
+
+    Returns a small report of which senders changed and by how much. Safe to
+    call concurrently — uses a module-level lock plus an atomic write.
+    """
+    if not processed_ids:
+        return {"removed": 0, "senders_changed": 0}
+
+    processed = set(processed_ids)
+    report = {"removed": 0, "senders_changed": 0, "now_empty": []}
+
+    with _CACHE_LOCK:
+        cache = _load_cache()
+        if not cache:
+            return report
+
+        new_senders = []
+        for s in cache["senders"]:
+            mids = s.get("message_ids", [])
+            kept = [m for m in mids if m not in processed]
+            removed_here = len(mids) - len(kept)
+            if removed_here:
+                report["removed"] += removed_here
+                report["senders_changed"] += 1
+                s["message_ids"] = kept
+                s["count"] = len(kept)
+                if not kept:
+                    report["now_empty"].append(s["email"])
+            new_senders.append(s)
+
+        new_senders = [s for s in new_senders if s["count"] > 0]
+        for i, s in enumerate(new_senders, start=1):
+            s["rank"] = i
+
+        cache["senders"] = new_senders
+        cache["total_unread"] = sum(s["count"] for s in new_senders)
+        cache["total_senders"] = len(new_senders)
+        cache["generated_at"] = cache.get("generated_at")  # leave original timestamp
+        cache["last_action_at"] = datetime.now().isoformat()
+
+        tmp = SENDERS_CACHE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(cache, indent=2))
+        tmp.replace(SENDERS_CACHE)
+
+    return report
+
+
 def list_senders(
     limit: int = 100,
     min_count: int = 1,

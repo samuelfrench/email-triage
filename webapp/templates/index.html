@@ -16,8 +16,28 @@
             <span class="sep">•</span>
             <span id="generated-at"></span>
             <button id="refresh-btn" title="Re-fetch unread inbox from Gmail">↻ Refresh inbox</button>
+            <button id="debug-btn" title="Show recent server + client log entries">🐛 Debug</button>
         </div>
     </header>
+
+    <div id="debug-panel" hidden>
+        <div class="debug-header">
+            <span>Debug log <small id="debug-meta" class="muted"></small></span>
+            <div class="debug-controls">
+                <label><input type="checkbox" id="debug-autorefresh" checked> auto-refresh</label>
+                <select id="debug-level">
+                    <option value="">all levels</option>
+                    <option value="DEBUG">DEBUG+</option>
+                    <option value="INFO">INFO+</option>
+                    <option value="WARNING">WARNING+</option>
+                    <option value="ERROR">ERROR only</option>
+                </select>
+                <button id="debug-clear">clear</button>
+                <button id="debug-close">close</button>
+            </div>
+        </div>
+        <pre id="debug-log"></pre>
+    </div>
 
     <main>
         <aside id="senders-pane">

@@ -31,9 +31,14 @@ from commands.senders import (
     _load_cache,
     _normalize_sender,
     _save_cache,
+    remove_message_ids_from_cache,
 )
+from db.debug_log import configure as configure_logging, get as get_logger, tail as log_tail, clear_buffer as clear_log_buffer
 from db.repository import Repository
 from gmail.client import GmailClient
+
+configure_logging()
+log = get_logger("webapp")
 
 
 def create_app() -> Flask:
@@ -239,6 +244,8 @@ def create_app() -> Flask:
             gmail = get_gmail()
             repo = state["repo"]
             job = state["jobs"][job_id]
+            log.info("job %s start: action=%s sender=%s total=%d", job_id, action, sender_email, len(message_ids))
+            succeeded_ids: list[str] = []
             try:
                 for mid in message_ids:
                     job["current_message_id"] = mid
@@ -287,7 +294,9 @@ def create_app() -> Flask:
                                 run_id=run_id,
                             )
                         job["succeeded"] += 1
+                        succeeded_ids.append(mid)
                     except Exception as e:
+                        log.exception("job %s failed for message %s: %s", job_id, mid, e)
                         job["errors"].append({"message_id": mid, "error": str(e)})
                     finally:
                         job["done"] += 1
@@ -295,6 +304,21 @@ def create_app() -> Flask:
                 job["running"] = False
                 job["finished_at"] = datetime.now().isoformat()
                 job["current_message_id"] = None
+                # Drop processed message IDs from the senders cache so the UI
+                # reflects the new counts on the next reload.
+                if succeeded_ids:
+                    try:
+                        cache_report = remove_message_ids_from_cache(succeeded_ids)
+                        log.info(
+                            "job %s done: succeeded=%d errors=%d cache_removed=%s",
+                            job_id, job["succeeded"], len(job["errors"]), cache_report,
+                        )
+                        job["cache_report"] = cache_report
+                    except Exception as e:
+                        log.exception("cache update failed for job %s: %s", job_id, e)
+                        job["cache_report"] = {"error": str(e)}
+                else:
+                    log.info("job %s done with 0 succeeded, no cache update", job_id)
 
         threading.Thread(target=worker, daemon=True).start()
         return jsonify({"job_id": job_id, "total": len(message_ids), "action": action, "run_id": run_id}), 202
@@ -308,6 +332,43 @@ def create_app() -> Flask:
     @app.get("/api/health")
     def api_health():
         return jsonify({"ok": True, "user_email": USER_EMAIL or None})
+
+    @app.get("/api/debug/logs")
+    def api_debug_logs():
+        limit = int(request.args.get("limit", 200))
+        level = request.args.get("level") or None
+        return jsonify({"entries": log_tail(limit=limit, level=level), "log_path": "data/webapp.log"})
+
+    @app.post("/api/debug/logs/clear")
+    def api_debug_logs_clear():
+        n = clear_log_buffer()
+        return jsonify({"cleared": n})
+
+    @app.post("/api/debug/client-log")
+    def api_debug_client_log():
+        payload = request.get_json(silent=True) or {}
+        level = (payload.get("level") or "info").lower()
+        message = payload.get("message") or "(empty)"
+        meta = payload.get("meta")
+        log_fn = getattr(log, level, log.info)
+        log_fn("[client] %s%s", message, f" meta={meta}" if meta else "")
+        return jsonify({"ok": True})
+
+    @app.before_request
+    def _log_request():
+        if request.path.startswith("/static") or request.path == "/favicon.ico":
+            return
+        log.debug("→ %s %s", request.method, request.full_path.rstrip("?"))
+
+    @app.after_request
+    def _log_response(resp):
+        if request.path.startswith("/static") or request.path == "/favicon.ico":
+            return resp
+        if resp.status_code >= 400:
+            log.warning("← %s %s %s", request.method, request.full_path.rstrip("?"), resp.status_code)
+        else:
+            log.debug("← %s %s %s", request.method, request.full_path.rstrip("?"), resp.status_code)
+        return resp
 
     return app
 
