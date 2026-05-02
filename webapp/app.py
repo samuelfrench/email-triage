@@ -45,6 +45,7 @@ def create_app() -> Flask:
 
     state = {
         "gmail": None,
+        "gmail_lock": threading.Lock(),  # httplib2 is NOT thread-safe; serialize API calls
         "repo": Repository(),
         "current_run_id": None,
         "refresh_lock": threading.Lock(),
@@ -56,6 +57,11 @@ def create_app() -> Flask:
         if state["gmail"] is None:
             state["gmail"] = GmailClient()
         return state["gmail"]
+
+    def gmail_call(fn):
+        """Run a Gmail API call under the global lock to avoid httplib2 thread-unsafety."""
+        with state["gmail_lock"]:
+            return fn()
 
     def get_run_id() -> int:
         if state["current_run_id"] is None:
@@ -103,7 +109,7 @@ def create_app() -> Flask:
             return jsonify({"error": f"Sender {sender_email!r} not in cache."}), 404
 
         gmail = get_gmail()
-        messages = gmail._get_messages_batch(match["message_ids"])
+        messages = gmail_call(lambda: gmail._get_messages_batch(match["message_ids"]))
         payload = [
             {
                 "message_id": m.message_id,
@@ -138,17 +144,20 @@ def create_app() -> Flask:
                     "display": "", "count": 0, "sample_subjects": [], "message_ids": [],
                 })
                 fetched = 0
-                for email in gmail.iter_inbox_messages(include_read=False):
-                    sender = _normalize_sender(email.sender_email)
-                    g = acc[sender]
-                    if not g["display"]:
-                        g["display"] = email.sender or sender
-                    g["count"] += 1
-                    g["message_ids"].append(email.message_id)
-                    if len(g["sample_subjects"]) < 3 and email.subject:
-                        g["sample_subjects"].append(email.subject)
-                    fetched += 1
-                    state["refresh_status"]["fetched"] = fetched
+                # Whole iteration must run under the lock — iter_inbox_messages does its
+                # own batched fetches against the same shared httplib2.Http.
+                with state["gmail_lock"]:
+                    for email in gmail.iter_inbox_messages(include_read=False):
+                        sender = _normalize_sender(email.sender_email)
+                        g = acc[sender]
+                        if not g["display"]:
+                            g["display"] = email.sender or sender
+                        g["count"] += 1
+                        g["message_ids"].append(email.message_id)
+                        if len(g["sample_subjects"]) < 3 and email.subject:
+                            g["sample_subjects"].append(email.subject)
+                        fetched += 1
+                        state["refresh_status"]["fetched"] = fetched
 
                 ranked = sorted(acc.items(), key=lambda kv: kv[1]["count"], reverse=True)
                 groups = [
@@ -235,7 +244,7 @@ def create_app() -> Flask:
                     job["current_message_id"] = mid
                     try:
                         if action == "mark_read":
-                            gmail.mark_as_read(mid)
+                            gmail_call(lambda mid=mid: gmail.mark_as_read(mid))
                             repo.record_action(
                                 message_id=mid, thread_id="", action_type="mark_read",
                                 label_name="UNREAD", original_labels=["UNREAD"],
@@ -246,8 +255,8 @@ def create_app() -> Flask:
                                 run_id=run_id,
                             )
                         elif action == "mark_reviewed":
-                            gmail.add_label(mid, REVIEWED_LABEL)
-                            gmail.mark_as_read(mid)
+                            gmail_call(lambda mid=mid: gmail.add_label(mid, REVIEWED_LABEL))
+                            gmail_call(lambda mid=mid: gmail.mark_as_read(mid))
                             repo.record_action(
                                 message_id=mid, thread_id="", action_type="add_label",
                                 label_name=REVIEWED_LABEL, original_labels=[],
@@ -267,7 +276,7 @@ def create_app() -> Flask:
                                 run_id=run_id,
                             )
                         elif action == "apply_label":
-                            gmail.add_label(mid, label_name)
+                            gmail_call(lambda mid=mid: gmail.add_label(mid, label_name))
                             repo.record_action(
                                 message_id=mid, thread_id="", action_type="add_label",
                                 label_name=label_name, original_labels=[],
