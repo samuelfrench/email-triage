@@ -62,12 +62,13 @@ class LabelManager:
             message_id: Gmail message ID
             label_name: Name of label to add
         """
+        from gmail.client import _retry_transient
         label_id = self.get_or_create_label(label_name)
-        self.service.users().messages().modify(
+        _retry_transient(lambda: self.service.users().messages().modify(
             userId="me",
             id=message_id,
             body={"addLabelIds": [label_id]}
-        ).execute()
+        ).execute())
 
     def remove_label_from_message(self, message_id: str, label_name: str = LOW_PRIORITY_LABEL) -> None:
         """
@@ -77,12 +78,13 @@ class LabelManager:
             message_id: Gmail message ID
             label_name: Name of label to remove
         """
+        from gmail.client import _retry_transient
         label_id = self.get_or_create_label(label_name)
-        self.service.users().messages().modify(
+        _retry_transient(lambda: self.service.users().messages().modify(
             userId="me",
             id=message_id,
             body={"removeLabelIds": [label_id]}
-        ).execute()
+        ).execute())
 
     def get_label_id(self, label_name: str) -> Optional[str]:
         """

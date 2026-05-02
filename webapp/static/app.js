@@ -164,6 +164,67 @@ function updateSelectAllCheckbox() {
     $("select-all").indeterminate = sel > 0 && sel < total;
 }
 
+function showProgress(jobId, total) {
+    let bar = document.getElementById("progress-bar");
+    if (!bar) {
+        bar = document.createElement("div");
+        bar.id = "progress-bar";
+        bar.className = "progress-bar";
+        bar.innerHTML = `
+            <div class="progress-meta">
+                <span class="progress-label"></span>
+                <span class="progress-count"></span>
+            </div>
+            <div class="progress-track"><div class="progress-fill"></div></div>
+            <div class="progress-current muted"></div>
+        `;
+        document.querySelector(".pane-header .actions").after(bar);
+    }
+    bar.dataset.jobId = jobId;
+    bar.dataset.total = total;
+    bar.querySelector(".progress-fill").style.width = "0%";
+    bar.querySelector(".progress-count").textContent = `0 / ${total}`;
+    bar.hidden = false;
+    return bar;
+}
+
+function updateProgress(bar, status) {
+    const total = status.total || 0;
+    const done = status.done || 0;
+    const succ = status.succeeded || 0;
+    const errs = (status.errors || []).length;
+    const pct = total ? (done / total) * 100 : 0;
+    bar.querySelector(".progress-fill").style.width = `${pct}%`;
+    bar.querySelector(".progress-label").textContent =
+        status.running
+            ? `Working: ${status.action.replace(/_/g, " ")}…`
+            : `Done • ${succ} ok${errs ? `, ${errs} errors` : ""}`;
+    bar.querySelector(".progress-count").textContent =
+        `${done.toLocaleString()} / ${total.toLocaleString()}`;
+    bar.querySelector(".progress-current").textContent =
+        status.running && status.current_message_id ? `current: ${status.current_message_id}` : "";
+}
+
+function hideProgress(bar) {
+    if (bar) {
+        bar.hidden = true;
+    }
+}
+
+async function pollJob(jobId, bar, total) {
+    while (true) {
+        try {
+            const status = await api(`/api/jobs/${jobId}`);
+            updateProgress(bar, status);
+            if (!status.running) return status;
+        } catch (e) {
+            updateProgress(bar, { total, done: total, succeeded: 0, errors: [{error: e.message}], running: false, action: "error" });
+            throw e;
+        }
+        await new Promise(r => setTimeout(r, 600));
+    }
+}
+
 async function bulkAction(endpoint, label = null) {
     if (!state.activeSender) return;
     if (state.selected.size === 0) {
@@ -177,14 +238,20 @@ async function bulkAction(endpoint, label = null) {
     const buttons = document.querySelectorAll("#messages-pane button");
     buttons.forEach(b => b.disabled = true);
 
+    let bar = null;
     try {
         const body = { message_ids: ids, sender_email: state.activeSender };
         if (label) body.label_name = label;
         const res = await api(endpoint, { method: "POST", body: JSON.stringify(body) });
         state.lastRunId = res.run_id;
 
-        // Visually mark processed rows
+        bar = showProgress(res.job_id, res.total);
+        const final = await pollJob(res.job_id, bar, res.total);
+
+        // Visually mark processed rows for those that succeeded
+        const errored = new Set((final.errors || []).map(e => e.message_id));
         for (const id of ids) {
+            if (errored.has(id)) continue;
             const row = document.querySelector(`.message-row[data-message-id="${id}"]`);
             if (row) row.classList.add("processed");
             const cb = row?.querySelector('input[type="checkbox"]');
@@ -193,18 +260,19 @@ async function bulkAction(endpoint, label = null) {
         state.selected.clear();
         updateSelectAllCheckbox();
 
-        const errs = (res.errors || []).length;
+        const errs = (final.errors || []).length;
         toast(
-            `${res.succeeded} done${errs ? ` (${errs} errors)` : ""} • run ${res.run_id}`,
+            `${final.succeeded} done${errs ? ` (${errs} errors)` : ""} • run ${final.run_id}`,
             errs ? "error" : "success"
         );
-        // Refresh sender count after action
         await loadSenders();
+        // Hide progress bar after a brief pause so user can see final state
+        setTimeout(() => hideProgress(bar), 2500);
     } catch (e) {
         toast(`Failed: ${e.message}`, "error");
+        if (bar) setTimeout(() => hideProgress(bar), 4000);
     } finally {
         buttons.forEach(b => b.disabled = false);
-        // Re-apply per-sender disabled state
         const sender = state.senders.find(s => s.email === state.activeSender);
         if (sender) updateActionButtons(sender);
     }

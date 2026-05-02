@@ -292,25 +292,51 @@ class GmailClient:
 
     def get_message_labels(self, message_id: str) -> list[str]:
         """Get current labels for a message."""
-        msg = self.service.users().messages().get(
+        msg = _retry_transient(lambda: self.service.users().messages().get(
             userId="me",
             id=message_id,
             format="minimal"
-        ).execute()
+        ).execute())
         return msg.get("labelIds", [])
 
     def mark_as_read(self, message_id: str) -> None:
         """Remove the UNREAD system label."""
-        self.service.users().messages().modify(
+        _retry_transient(lambda: self.service.users().messages().modify(
             userId="me",
             id=message_id,
             body={"removeLabelIds": ["UNREAD"]}
-        ).execute()
+        ).execute())
 
     def mark_as_unread(self, message_id: str) -> None:
         """Add the UNREAD system label back."""
-        self.service.users().messages().modify(
+        _retry_transient(lambda: self.service.users().messages().modify(
             userId="me",
             id=message_id,
             body={"addLabelIds": ["UNREAD"]}
-        ).execute()
+        ).execute())
+
+
+def _retry_transient(fn, max_retries: int = 4, base_backoff: float = 1.0):
+    """Run a Gmail API call, retrying on transient connection/SSL/rate errors.
+
+    Catches ssl.SSLError, ConnectionError, OSError, BrokenPipeError, and
+    HTTP 429/500/503 responses. Other errors bubble up unchanged.
+    """
+    import socket
+    import ssl
+    import time
+    from googleapiclient.errors import HttpError
+
+    backoff = base_backoff
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except HttpError as e:
+            if e.resp.status not in (429, 500, 503) or attempt == max_retries:
+                raise
+        except (ssl.SSLError, ConnectionError, BrokenPipeError, socket.timeout, OSError) as e:
+            if attempt == max_retries:
+                raise
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 30.0)
+    return None  # unreachable

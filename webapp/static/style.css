@@ -240,6 +240,41 @@ button.primary:hover { background: var(--primary-hover); }
 
 .muted { color: var(--muted); font-size: 13px; }
 
+.progress-bar {
+    margin: 12px 16px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+.progress-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+    font-size: 13px;
+}
+.progress-label { color: var(--text); font-weight: 500; }
+.progress-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.progress-track {
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--primary));
+    width: 0%;
+    transition: width 0.3s ease;
+}
+.progress-current {
+    margin-top: 4px;
+    font-size: 11px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
 .toast {
     position: fixed;
     bottom: 24px;
