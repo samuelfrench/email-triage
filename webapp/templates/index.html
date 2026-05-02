@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>email-triage</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header>
+        <div class="brand">email-triage</div>
+        <div class="meta">
+            <span id="user-email">{{ user_email }}</span>
+            <span class="sep">•</span>
+            <span id="totals">loading…</span>
+            <span class="sep">•</span>
+            <span id="generated-at"></span>
+            <button id="refresh-btn" title="Re-fetch unread inbox from Gmail">↻ Refresh inbox</button>
+        </div>
+    </header>
+
+    <main>
+        <aside id="senders-pane">
+            <div class="pane-header">
+                <h2>Senders</h2>
+                <input id="filter" type="search" placeholder="filter by email…">
+            </div>
+            <ol id="senders-list"></ol>
+        </aside>
+
+        <section id="messages-pane">
+            <div id="messages-empty" class="empty">
+                <p>Pick a sender on the left to review their unread messages.</p>
+                <p class="hint">Self-sent senders are flagged — they won't get auto-marked-read; you have to either address them or mark them reviewed.</p>
+            </div>
+
+            <div id="messages-content" hidden>
+                <div class="pane-header">
+                    <div>
+                        <h2 id="messages-title"></h2>
+                        <p id="messages-subtitle" class="muted"></p>
+                    </div>
+                    <div class="actions">
+                        <label class="select-all"><input type="checkbox" id="select-all"> select all</label>
+                        <button id="action-mark-read">Mark Read</button>
+                        <button id="action-mark-reviewed" class="primary">Mark Reviewed (label + read)</button>
+                        <button id="action-apply-low">Apply LowPriority</button>
+                    </div>
+                </div>
+
+                <ul id="messages-list"></ul>
+            </div>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+    <div id="refresh-overlay" class="overlay" hidden>
+        <div class="overlay-card">
+            <div class="spinner"></div>
+            <p>Re-fetching unread inbox…</p>
+            <p class="muted"><span id="refresh-progress">0</span> emails</p>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
